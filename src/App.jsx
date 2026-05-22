@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase, isSupabaseConfigured, clearSupabaseConfig } from './supabaseClient';
-import SupabaseConfigModal from './components/SupabaseConfigModal';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
 import Login from './components/Login';
 import Register from './components/Register';
 import Pending from './components/Pending';
@@ -252,57 +251,44 @@ export default function App() {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-teal-900/20 via-slate-900 to-slate-950 pointer-events-none z-0"></div>
 
       {/* Connection Indicator Bar */}
-      <div className="relative z-10 bg-slate-950/85 backdrop-blur-md border-b border-slate-800 text-[10px] text-slate-400 py-2 px-4 flex justify-between items-center transition-all duration-300">
-        <div className="flex items-center space-x-2">
-          {dbStatus === 'connected' && (
-            <>
-              <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
-              <span>Database Connected</span>
-            </>
-          )}
-          {dbStatus === 'checking' && (
-            <>
-              <Loader className="w-3.5 h-3.5 text-blue-400 animate-spin" />
-              <span>Connecting to database...</span>
-            </>
-          )}
-          {dbStatus === 'slow' && (
-            <>
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-              <span className="text-amber-400">Database is waking up (Supabase cold-start)...</span>
-            </>
-          )}
-          {dbStatus === 'timeout' && (
-            <>
-              <WifiOff className="w-3.5 h-3.5 text-red-500 animate-bounce" />
-              <span className="text-red-400 font-semibold">Connection Timed Out</span>
-            </>
-          )}
-          {dbStatus === 'error' && (
-            <>
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-amber-400">Backend Offline</span>
-            </>
-          )}
+      {(dbStatus !== 'connected' || profile) && (
+        <div className="relative z-10 bg-slate-950/85 backdrop-blur-md border-b border-slate-800 text-[10px] text-slate-400 py-2 px-4 flex justify-between items-center transition-all duration-300">
+          <div className="flex items-center space-x-2">
+            {dbStatus === 'checking' && (
+              <>
+                <Loader className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                <span>Connecting to database...</span>
+              </>
+            )}
+            {dbStatus === 'slow' && (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                <span className="text-amber-400">Database is waking up (Supabase cold-start)...</span>
+              </>
+            )}
+            {dbStatus === 'timeout' && (
+              <>
+                <WifiOff className="w-3.5 h-3.5 text-red-500 animate-bounce" />
+                <span className="text-red-400 font-semibold">Connection Timed Out</span>
+              </>
+            )}
+            {dbStatus === 'error' && (
+              <>
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                <span className="text-amber-400">Backend Offline</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center space-x-3">
+            {profile && (
+              <span className="flex items-center text-emerald-500 font-bold">
+                <ShieldCheck className="w-3 h-3 mr-0.5" />
+                Verified Profile: {profile.org_name}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex items-center space-x-3">
-          <button 
-            onClick={() => {
-              setConfigMissing(true);
-              setDbStatus('error');
-            }}
-            className="hover:text-white transition-all underline font-bold"
-          >
-            Database Settings
-          </button>
-          {profile && (
-            <span className="flex items-center text-emerald-500 font-bold">
-              <ShieldCheck className="w-3 h-3 mr-0.5" />
-              Verified Profile: {profile.org_name}
-            </span>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* Connection Warning Banner */}
       {dbStatus === 'timeout' && (
@@ -323,14 +309,6 @@ export default function App() {
             >
               Retry Connection
             </button>
-            <button 
-              onClick={() => {
-                clearSupabaseConfig();
-              }}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-1 rounded-lg text-[10px] transition-all border border-slate-700"
-            >
-              Reset Settings
-            </button>
           </div>
         </div>
       )}
@@ -338,7 +316,15 @@ export default function App() {
       {/* Screen Loader / Main View Wrapper */}
       <div className="flex-1 flex items-center justify-center p-4 z-10 relative">
         {configMissing ? (
-          <SupabaseConfigModal />
+          <div className="bg-white rounded-3xl p-8 max-w-md shadow-xl border border-slate-100 text-center space-y-4">
+            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto text-red-600">
+              <Database className="w-6 h-6 animate-pulse" />
+            </div>
+            <h2 className="text-xl font-bold text-slate-800">Configuration Missing</h2>
+            <p className="text-sm text-slate-500">
+              Supabase environment variables are not configured. Please add <strong>VITE_SUPABASE_URL</strong> and <strong>VITE_SUPABASE_ANON_KEY</strong> to your <strong>.env.local</strong> file.
+            </p>
+          </div>
         ) : loading ? (
           <div className="flex flex-col items-center space-y-3">
             <Loader className="w-8 h-8 text-emerald-500 animate-spin" />
@@ -385,7 +371,7 @@ export default function App() {
 
       {/* Footer bar */}
       <footer className="relative z-10 bg-slate-950/60 border-t border-slate-800/40 text-[9px] text-slate-600 text-center py-2.5">
-        <p>Community Resource Sharing Bridge © 2026. Made with OpenStreetMap & Supabase.</p>
+        <p>KindlyFed © 2026. Made with OpenStreetMap & Supabase.</p>
       </footer>
     </div>
   );

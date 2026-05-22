@@ -107,7 +107,7 @@ export default function Login({ onViewChange, onSetUser }) {
       
       {/* Visual Header banner */}
       <div className="p-8 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-center">
-        <h2 className="text-3xl font-black tracking-tight">Resource Bridge</h2>
+        <h2 className="text-3xl font-black tracking-tight">KindlyFed</h2>
         <p className="text-emerald-100 text-xs mt-1">Connecting resource donors with verified local orphanages and social workers.</p>
       </div>
 

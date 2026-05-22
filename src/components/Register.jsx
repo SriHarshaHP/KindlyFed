@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
 import { supabase } from '../supabaseClient';
-import { User, Mail, Phone, Lock, FileText, MapPin, Upload, Compass, HelpCircle } from 'lucide-react';
+import { User, Mail, Phone, Lock, FileText, MapPin, Upload, Compass, HelpCircle, Loader2 } from 'lucide-react';
 import L from 'leaflet';
 
 // Fix for default Leaflet icon paths in Vite
@@ -27,6 +27,17 @@ function MapClickHandler({ setPosition }) {
   return null;
 }
 
+// Map center flying update helper
+function ChangeMapCenter({ center }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && center[0] && center[1]) {
+      map.flyTo(center, 14);
+    }
+  }, [center, map]);
+  return null;
+}
+
 export default function Register({ onViewChange, onSetUser }) {
   // Form states
   const [orgName, setOrgName] = useState('');
@@ -44,6 +55,7 @@ export default function Register({ onViewChange, onSetUser }) {
   
   // UI UX States
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -53,6 +65,36 @@ export default function Register({ onViewChange, onSetUser }) {
     if (selectedFile) {
       setFile(selectedFile);
       setFilePreview(URL.createObjectURL(selectedFile));
+    }
+  };
+
+  // Get current device location
+  const handleGetLocation = async () => {
+    setLocating(true);
+    setErrorMsg('');
+    try {
+      let coords;
+      // Try Capacitor Geolocation plugin first
+      try {
+        const { Geolocation } = await import('@capacitor/geolocation');
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
+        coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      } catch {
+        // Fallback: browser geolocation
+        coords = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject(new Error('Geolocation not supported by browser.'));
+          navigator.geolocation.getCurrentPosition(
+            (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            (err) => reject(new Error(err.message || 'GPS permission denied or timeout.')),
+            { enableHighAccuracy: true, timeout: 10000 }
+          );
+        });
+      }
+      setPosition(coords);
+    } catch (err) {
+      setErrorMsg('Could not fetch location: ' + err.message);
+    } finally {
+      setLocating(false);
     }
   };
 
@@ -351,10 +393,25 @@ export default function Register({ onViewChange, onSetUser }) {
               <label className="block text-[10px] font-bold uppercase text-slate-500">
                 Premises Location (Map Pin)
               </label>
-              <span className="text-[9px] text-emerald-600 font-bold flex items-center">
-                <MapPin className="w-3 h-3 mr-0.5" />
-                {position.lat.toFixed(4)}, {position.lng.toFixed(4)}
-              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={handleGetLocation}
+                  disabled={locating}
+                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold px-2.5 py-1 rounded-lg text-[9px] border border-emerald-200 transition-all flex items-center space-x-1 disabled:opacity-50"
+                >
+                  {locating ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                  ) : (
+                    <Compass className="w-3 h-3 text-emerald-600" />
+                  )}
+                  <span>Use Current Location</span>
+                </button>
+                <span className="text-[9px] text-emerald-600 font-bold flex items-center">
+                  <MapPin className="w-3 h-3 mr-0.5" />
+                  {position.lat.toFixed(4)}, {position.lng.toFixed(4)}
+                </span>
+              </div>
             </div>
             
             <div className="w-full h-44 rounded-2xl overflow-hidden border border-slate-200">
@@ -369,10 +426,11 @@ export default function Register({ onViewChange, onSetUser }) {
                 />
                 <Marker position={[position.lat, position.lng]} />
                 <MapClickHandler setPosition={setPosition} />
+                <ChangeMapCenter center={[position.lat, position.lng]} />
               </MapContainer>
             </div>
             <p className="text-[9px] text-slate-400 mt-1">
-              Click anywhere on the map to set the exact coordinates of your organization.
+              Click anywhere on the map or click "Use Current Location" to set the exact coordinates of your organization.
             </p>
           </div>
         </div>
