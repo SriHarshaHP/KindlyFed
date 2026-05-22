@@ -133,16 +133,66 @@ export default function Register({ onViewChange, onSetUser }) {
     }
 
     try {
-      // 1. Sign up user via Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
+      let user = null;
+      let authData = null;
 
-      if (authError) throw authError;
+      // Check if we are already logged in with the same email
+      const { data: { session: activeSession } } = await supabase.auth.getSession();
+      if (activeSession?.user && activeSession.user.email?.toLowerCase() === email.toLowerCase()) {
+        user = activeSession.user;
+        authData = { user, session: activeSession };
+      } else {
+        // If logged in with a different user, sign out first
+        if (activeSession?.user) {
+          await supabase.auth.signOut();
+        }
 
-      const user = authData.user;
-      if (!user) throw new Error('Failed to create account. User is null.');
+        // 1. Sign up user via Supabase Auth
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+
+        if (signUpError) {
+          // If user already registered, check if they have a profile
+          const isAlreadyReg = signUpError.message.toLowerCase().includes('already') || 
+                               signUpError.message.toLowerCase().includes('exists');
+          if (isAlreadyReg) {
+            // Attempt to sign in to verify credentials and complete registration
+            const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+              email,
+              password,
+            });
+
+            if (!signInError && signInData.user) {
+              // Check if profile exists
+              const { data: existingProfile, error: profileErr } = await supabase
+                .from('profiles')
+                .select('id')
+                .eq('id', signInData.user.id)
+                .maybeSingle();
+
+              if (!existingProfile) {
+                // Profile is missing, we can reuse this auth session to complete registration
+                user = signInData.user;
+                authData = signInData;
+              } else {
+                throw new Error('This email is already registered and has a profile. Please log in.');
+              }
+            } else {
+              // Sign in failed (wrong password etc), throw original signup error
+              throw signUpError;
+            }
+          } else {
+            throw signUpError;
+          }
+        } else {
+          user = signUpData.user;
+          authData = signUpData;
+        }
+      }
+
+      if (!user) throw new Error('Failed to obtain user session.');
 
       // 2. Upload Aadhaar photo to Supabase Storage
       const fileExt = file.name.split('.').pop();
@@ -414,7 +464,10 @@ export default function Register({ onViewChange, onSetUser }) {
               </div>
             </div>
             
-            <div className="w-full h-44 rounded-2xl overflow-hidden border border-slate-200">
+            <div 
+              className="w-full h-44 rounded-2xl overflow-hidden border border-slate-200"
+              onClick={(e) => e.stopPropagation()}
+            >
               <MapContainer 
                 center={[position.lat, position.lng]} 
                 zoom={13} 
