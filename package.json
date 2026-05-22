@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/camera": "^8.2.0",
+    "@capacitor/geolocation": "^8.2.0",
     "@supabase/supabase-js": "^2.106.1",
     "canvas-confetti": "^1.9.4",
     "leaflet": "^1.9.4",

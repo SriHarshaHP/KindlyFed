@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase, isSupabaseConfigured, clearSupabaseConfig } from './supabaseClient';
 import SupabaseConfigModal from './components/SupabaseConfigModal';
 import Login from './components/Login';
@@ -7,56 +7,78 @@ import Pending from './components/Pending';
 import AdminDashboard from './components/AdminDashboard';
 import DonorDashboard from './components/DonorDashboard';
 import RecipientDashboard from './components/RecipientDashboard';
-import { Database, ShieldCheck, HelpCircle, Loader } from 'lucide-react';
+import LeaderboardView from './components/LeaderboardView';
+import { Database, ShieldCheck, Loader, AlertTriangle, WifiOff } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   
-  // Router states: 'login' | 'register' | 'pending' | 'admin' | 'donor' | 'recipient'
+  // Router states: 'login' | 'register' | 'pending' | 'admin' | 'donor' | 'recipient' | 'leaderboard'
   const [view, setView] = useState('login');
   const [loading, setLoading] = useState(true);
   const [configMissing, setConfigMissing] = useState(!isSupabaseConfigured());
+  const [dbStatus, setDbStatus] = useState(isSupabaseConfigured() ? 'checking' : 'error');
+  const [prevView, setPrevView] = useState('recipient'); // track where to go back from leaderboard
+
+  const userRef = useRef(user);
+  const profileRef = useRef(profile);
+  const isLoadingProfileRef = useRef(false);
+
+  // Keep refs in sync with state to avoid stale closure issues in auth listeners
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   useEffect(() => {
     if (configMissing) {
       setLoading(false);
+      setDbStatus('error');
       return;
     }
 
     // Check active auth session with a timeout fallback
     const initSession = async () => {
+      let slowTimer;
       try {
+        setDbStatus('checking');
         const sessionPromise = supabase.auth.getSession();
         
-        // Timeout after 8 seconds to prevent infinite spinners if DB is hung
+        // After 5s, mark it as slow but keep waiting
+        slowTimer = setTimeout(() => {
+          setDbStatus('slow');
+        }, 5000);
+
+        // Timeout after 25 seconds to prevent infinite spinners
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session fetch timed out.')), 8000)
+          setTimeout(() => reject(new Error('Session fetch timed out.')), 25000)
         );
         
         const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
+        clearTimeout(slowTimer);
+        setDbStatus('connected');
         
         if (session?.user) {
+          userRef.current = session.user;
           setUser(session.user);
           await loadUserProfile(session.user.id);
         } else {
           setLoading(false);
         }
       } catch (err) {
+        clearTimeout(slowTimer);
         console.error('Session init error (DB might be hung):', err);
-        
+        setDbStatus('timeout');
         setLoading(false);
+        userRef.current = null;
+        profileRef.current = null;
         setUser(null);
         setProfile(null);
         setView('login');
-        
-        if (err.message?.includes('timed out')) {
-          const currentUrl = localStorage.getItem('supabaseUrl') || import.meta.env.VITE_SUPABASE_URL || 'UNKNOWN';
-          const reset = window.confirm(`Database connection timed out.\\n\\nThe app tried to connect to:\\n${currentUrl}\\n\\nIf this URL is incorrect or the database is asleep, click OK to reset your settings and enter them again in the popup dialog.`);
-          if (reset) {
-            clearSupabaseConfig();
-          }
-        }
       }
     };
 
@@ -64,11 +86,41 @@ export default function App() {
 
     // Listen for Auth status changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth status change event:', event);
+      console.log('Auth status change event:', event, 'session user:', session?.user?.id);
+      
+      if (event === 'SIGNED_OUT') {
+        userRef.current = null;
+        profileRef.current = null;
+        setUser(null);
+        setProfile(null);
+        setView('login');
+        setLoading(false);
+        isLoadingProfileRef.current = false;
+        return;
+      }
+
       if (session?.user) {
-        setUser(session.user);
-        await loadUserProfile(session.user.id);
+        const userId = session.user.id;
+        
+        // Sync user ref and state
+        if (userId !== userRef.current?.id) {
+          userRef.current = session.user;
+          setUser(session.user);
+        }
+
+        // Check if we need to load profile
+        if (userId !== profileRef.current?.id) {
+          if (!isLoadingProfileRef.current) {
+            await loadUserProfile(userId);
+          }
+        } else {
+          // Profile is already correct and matches user, ensure we are not stuck in loading
+          setLoading(false);
+        }
       } else {
+        // No session
+        userRef.current = null;
+        profileRef.current = null;
         setUser(null);
         setProfile(null);
         setView('login');
@@ -82,7 +134,16 @@ export default function App() {
   }, [configMissing]);
 
   const loadUserProfile = async (uid) => {
-    setLoading(true);
+    if (isLoadingProfileRef.current) return;
+    isLoadingProfileRef.current = true;
+    
+    // Only show full-screen spinner if profile is not already loaded
+    if (!profileRef.current) {
+      setLoading(true);
+    }
+    
+    setDbStatus('checking');
+    let slowTimer;
     try {
       const profilePromise = supabase
         .from('profiles')
@@ -90,25 +151,33 @@ export default function App() {
         .eq('id', uid)
         .single();
         
+      slowTimer = setTimeout(() => {
+        setDbStatus('slow');
+      }, 5000);
+
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile fetch timed out.')), 8000)
+        setTimeout(() => reject(new Error('Profile fetch timed out.')), 25000)
       );
 
       const { data, error } = await Promise.race([profilePromise, timeoutPromise]);
+      clearTimeout(slowTimer);
 
       if (error) {
+        setDbStatus('connected');
         setView('register');
       } else {
+        setDbStatus('connected');
+        profileRef.current = data;
         setProfile(data);
         routeUser(data);
       }
     } catch (err) {
+      clearTimeout(slowTimer);
       console.error('Error loading profile (DB might be hung):', err);
+      setDbStatus('timeout');
       setView('login');
-      if (err.message?.includes('timed out')) {
-        alert('Database connection timed out while loading profile. Please check for infinite RLS recursion policies in Supabase.');
-      }
     } finally {
+      isLoadingProfileRef.current = false;
       setLoading(false);
     }
   };
@@ -138,6 +207,8 @@ export default function App() {
   };
 
   const handleSetUser = (u, p) => {
+    userRef.current = u;
+    profileRef.current = p;
     setUser(u);
     setProfile(p);
     routeUser(p);
@@ -147,6 +218,8 @@ export default function App() {
     setLoading(true);
     try {
       await supabase.auth.signOut();
+      userRef.current = null;
+      profileRef.current = null;
       setUser(null);
       setProfile(null);
       setView('login');
@@ -158,8 +231,18 @@ export default function App() {
   };
 
   const handleRefreshProfile = (updatedProfile) => {
+    profileRef.current = updatedProfile;
     setProfile(updatedProfile);
     routeUser(updatedProfile);
+  };
+
+  const handleShowLeaderboard = () => {
+    setPrevView(view);
+    setView('leaderboard');
+  };
+
+  const handleLeaderboardBack = () => {
+    setView(prevView);
   };
 
   return (
@@ -169,19 +252,45 @@ export default function App() {
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-teal-900/20 via-slate-900 to-slate-950 pointer-events-none z-0"></div>
 
       {/* Connection Indicator Bar */}
-      <div className="relative z-10 bg-slate-950/80 backdrop-blur-md border-b border-slate-800 text-[10px] text-slate-400 py-1.5 px-4 flex justify-between items-center">
+      <div className="relative z-10 bg-slate-950/85 backdrop-blur-md border-b border-slate-800 text-[10px] text-slate-400 py-2 px-4 flex justify-between items-center transition-all duration-300">
         <div className="flex items-center space-x-2">
-          <Database className={`w-3.5 h-3.5 ${configMissing ? 'text-amber-500 animate-pulse' : 'text-emerald-500'}`} />
-          <span>
-            {configMissing 
-              ? 'Supabase Backend Offline' 
-              : 'Supabase Backend Connected'
-            }
-          </span>
+          {dbStatus === 'connected' && (
+            <>
+              <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+              <span>Database Connected</span>
+            </>
+          )}
+          {dbStatus === 'checking' && (
+            <>
+              <Loader className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+              <span>Connecting to database...</span>
+            </>
+          )}
+          {dbStatus === 'slow' && (
+            <>
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+              <span className="text-amber-400">Database is waking up (Supabase cold-start)...</span>
+            </>
+          )}
+          {dbStatus === 'timeout' && (
+            <>
+              <WifiOff className="w-3.5 h-3.5 text-red-500 animate-bounce" />
+              <span className="text-red-400 font-semibold">Connection Timed Out</span>
+            </>
+          )}
+          {dbStatus === 'error' && (
+            <>
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+              <span className="text-amber-400">Backend Offline</span>
+            </>
+          )}
         </div>
         <div className="flex items-center space-x-3">
           <button 
-            onClick={() => setConfigMissing(true)}
+            onClick={() => {
+              setConfigMissing(true);
+              setDbStatus('error');
+            }}
             className="hover:text-white transition-all underline font-bold"
           >
             Database Settings
@@ -194,6 +303,37 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {/* Connection Warning Banner */}
+      {dbStatus === 'timeout' && (
+        <div className="relative z-10 bg-red-950/80 border-b border-red-800/50 text-xs text-red-200 py-3 px-4 flex flex-col sm:flex-row justify-between items-center space-y-2 sm:space-y-0 backdrop-blur-sm">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <span>
+              The connection to <strong>{localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || 'Supabase'}</strong> timed out. 
+              If the database was asleep, it may still be waking up.
+            </span>
+          </div>
+          <div className="flex items-center space-x-3">
+            <button 
+              onClick={() => {
+                window.location.reload();
+              }}
+              className="bg-red-900/60 hover:bg-red-800 text-white font-bold px-3 py-1 rounded-lg text-[10px] transition-all border border-red-700"
+            >
+              Retry Connection
+            </button>
+            <button 
+              onClick={() => {
+                clearSupabaseConfig();
+              }}
+              className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-1 rounded-lg text-[10px] transition-all border border-slate-700"
+            >
+              Reset Settings
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Screen Loader / Main View Wrapper */}
       <div className="flex-1 flex items-center justify-center p-4 z-10 relative">
@@ -227,7 +367,17 @@ export default function App() {
               <DonorDashboard profile={profile} onSignOut={handleSignOut} />
             )}
             {view === 'recipient' && (
-              <RecipientDashboard profile={profile} onSignOut={handleSignOut} />
+              <RecipientDashboard
+                profile={profile}
+                onSignOut={handleSignOut}
+                onShowLeaderboard={handleShowLeaderboard}
+              />
+            )}
+            {view === 'leaderboard' && profile?.user_type === 'Social Worker' && (
+              <LeaderboardView
+                profile={profile}
+                onBack={handleLeaderboardBack}
+              />
             )}
           </>
         )}
